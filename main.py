@@ -4,7 +4,7 @@ import os
 import ollama
 import pandas as pd
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 
 # Load environment variables from .env file if present
 if os.path.exists(".env"):
@@ -18,20 +18,46 @@ if os.path.exists(".env"):
 
 app = FastAPI()
 
-CANONICAL_COLUMNS = ["first_name", "last_name", "email", "phone_number"]
+CANONICAL_COLUMNS = [
+    "order_id", 
+    "order_date", 
+    "customer_name", 
+    "customer_email", 
+    "customer_phone",
+    "category",
+    "product_name", 
+    "quantity",
+    "unit_price",
+    "total_price"
+    ]
 
 COLUMN_MAPPING = {
-    "fname": "first_name",
-    "given_name": "first_name",
-    "first": "first_name",
-    "lname": "last_name",
-    "surname": "last_name",
-    "last": "last_name",
-    "email_address": "email",
-    "mail": "email",
-    "phone": "phone_number",
-    "mobile": "phone_number",
-    "tel": "phone_number",
+    "order_id": "order_id",
+    "orderid": "order_id",
+    "id": "order_id",
+    "order_number": "order_id",
+    "orderdate": "order_date",
+    "order_date": "order_date",
+    "date": "order_date",
+    "sale_date": "order_date",
+    "customer": "customer_name",
+    "customer_name": "customer_name",
+    "client": "customer_name",
+    "email_address": "customer_email",
+    "mail": "customer_email",
+    "phone": "customer_phone",
+    "mobile": "customer_phone",
+    "tel": "customer_phone",
+    "category": "category",
+    "product": "product_name",
+    "product_name": "product_name",
+    "item": "product_name",
+    "item_name": "product_name",
+    "qty": "quantity",
+    "quantity": "quantity",
+    "amount": "unit_price",
+    "price": "unit_price",
+    "total": "total_price"
 }
 
 
@@ -55,13 +81,18 @@ def auto_map_columns(file_columns: list[str]) -> dict[str, str]:
 
 def prompt_for_mapping(
     file_columns: list[str],
+    sample_data: list[dict] | None = None,
     model: str = "gpt-oss:120b",
 ) -> dict[str, str]:
+    sample_section = ""
+    if sample_data:
+        sample_section = f"\n    Here are the first few rows of actual data to help you understand what each column contains:\n    {json.dumps(sample_data, indent=2, default=str)}\n"
+
     prompt = f"""You are an AI assistant that maps file columns to canonical columns.
     Canonical columns: {CANONICAL_COLUMNS}
     File columns: {file_columns}
-
-    You should map the file columns to the canonical columns.
+    {sample_section}
+    You should map the file columns to the canonical columns based on column names and the actual data values.
     Return the mapping as a JSON object, where the keys are the canonical columns and the values are the corresponding file columns.
     If a canonical column has no matching file column, omit it or set it to null.
 
@@ -121,7 +152,6 @@ def prompt_for_mapping(
 async def get_frontend():
     return FileResponse("static/index.html")
 
-
 @app.post("/analyze/")
 async def analyze_file(file: UploadFile = File(...)):
     filename = file.filename.lower()
@@ -129,9 +159,9 @@ async def analyze_file(file: UploadFile = File(...)):
 
     try:
         if filename.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(contents), nrows=1)
+            df = pd.read_csv(io.BytesIO(contents), nrows=10)
         elif filename.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(io.BytesIO(contents), nrows=1)
+            df = pd.read_excel(io.BytesIO(contents), nrows=10)
         else:
             raise HTTPException(
                 status_code=400, detail="Please upload a .csv or .xlsx file."
@@ -142,25 +172,42 @@ async def analyze_file(file: UploadFile = File(...)):
         )
 
     file_columns = list(df.columns)
-    ai_suggested = prompt_for_mapping(file_columns)
     auto_suggested = auto_map_columns(file_columns)
 
-    # Merge suggestions, prioritizing AI suggestions
-    suggested = {}
-    for canonical in CANONICAL_COLUMNS:
-        if canonical in ai_suggested and ai_suggested[canonical]:
-            suggested[canonical] = ai_suggested[canonical]
-        elif canonical in auto_suggested and auto_suggested[canonical]:
-            suggested[canonical] = auto_suggested[canonical]
+    # Include sample data for preview (convert NaN to None for JSON)
+    sample_df = df.astype(object).where(pd.notnull(df), None)
 
     return {
         "canonical_columns": CANONICAL_COLUMNS,
         "file_columns": file_columns,
-        "suggested_mapping": suggested,
-        "ai_mapping": ai_suggested,
-        "auto_mapping": auto_suggested,
+        "suggested_mapping": auto_suggested,
+        "sample_data": sample_df.to_dict(orient="records"),
     }
 
+
+@app.post("/enhance/")
+async def enhance_mapping(file: UploadFile = File(...)):
+    filename = file.filename.lower()
+    contents = await file.read()
+
+    try:
+        if filename.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(contents), nrows=10)
+        elif filename.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(contents), nrows=10)
+        else:
+            raise HTTPException(
+                status_code=400, detail="Please upload a .csv or .xlsx file."
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, detail=f"Failed to read file: {str(e)}"
+        )
+
+    file_columns = list(df.columns)
+    sample_data = df.head(10).to_dict(orient='records')
+    ai_mapping = prompt_for_mapping(file_columns, sample_data=sample_data)
+    return {"ai_mapping": ai_mapping}
 
 @app.post("/process/")
 async def process_file(
