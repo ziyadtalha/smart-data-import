@@ -63,9 +63,12 @@
         <div id="step-upload" class="space-y-4">
             <div id="drop-zone"
                 class="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50/10 transition-all duration-200">
-                <input type="file" id="file-input" accept=".csv, .xlsx, .xls" class="hidden">
-                <p class="text-slate-600 font-semibold">Drag & drop your .csv or .xlsx file here, or <span
+                <input type="file" id="file-input"
+                    accept=".csv, .xlsx, .xls, .sqlite, .sqlite3, .db" class="hidden">
+                <p class="text-slate-600 font-semibold">Drag &amp; drop your file here, or <span
                         class="text-indigo-600 underline">click to browse</span></p>
+                <p class="text-xs text-slate-400 mt-1">.csv &middot; .xlsx &middot; .xls &middot; .sqlite &middot; .db
+                </p>
                 <p id="file-name"
                     class="text-sm text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-md px-3 py-1.5 inline-block mt-4 hidden font-medium">
                 </p>
@@ -83,6 +86,27 @@
                 <h2 class="text-xl font-bold text-slate-900">Review & Adjust Column Mappings</h2>
                 <p class="text-sm text-slate-500">We detected header matches. Verify and adjust the mappings below
                     before finalizing.</p>
+            </div>
+
+            <!-- Shown only for uploads that contain more than one table -->
+            <div id="table-picker"
+                class="hidden bg-amber-50/60 border border-amber-200/80 rounded-xl p-4 space-y-2">
+                <label for="table-select"
+                    class="block text-xs font-bold text-amber-800 uppercase tracking-wider">Database table</label>
+                <select id="table-select" onchange="changeTable()"
+                    class="w-full p-2.5 border border-amber-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm shadow-sm transition"></select>
+                <p class="text-xs text-amber-700">This file holds several tables. We picked the one matching the most
+                    canonical columns — switch to map a different one.</p>
+
+                <label class="flex items-start gap-2 pt-2 border-t border-amber-200/70 cursor-pointer">
+                    <input type="checkbox" id="auto-join" onchange="toggleAutoJoin()"
+                        class="mt-0.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500">
+                    <span class="text-xs text-amber-800">
+                        <span class="font-semibold">Pull in related tables</span> — adds columns from tables that
+                        join one-to-one onto each row. Tables that would duplicate rows are skipped.
+                        <span id="joined-summary" class="block mt-1 font-medium text-amber-900"></span>
+                    </span>
+                </label>
             </div>
 
             <div id="mapping-controls" class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -149,6 +173,17 @@
         let canonicalColumns = [];
         let fileColumns = [];
         let aiEnhanced = false;
+        let selectedTable = null;
+        let autoJoin = false;
+
+        // Every endpoint takes the same upload, plus the table options for databases.
+        function buildFormData() {
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            if (selectedTable) formData.append('table', selectedTable);
+            if (autoJoin) formData.append('auto_join', 'true');
+            return formData;
+        }
 
         dropZone.onclick = () => fileInput.click();
 
@@ -166,17 +201,78 @@
 
         function handleFile(file) {
             selectedFile = file;
+            selectedTable = null;
+            autoJoin = false;
+            document.getElementById('auto-join').checked = false;
+            document.getElementById('table-picker').classList.add('hidden');
             fileNameDisplay.textContent = `Selected: ${file.name}`;
             fileNameDisplay.classList.remove('hidden');
             analyzeBtn.disabled = false;
             analyzeBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         }
 
+        function renderTablePicker(tables, selected, joined) {
+            const picker = document.getElementById('table-picker');
+            const select = document.getElementById('table-select');
+            const summary = document.getElementById('joined-summary');
+
+            if (!tables || tables.length < 2) {
+                picker.classList.add('hidden');
+                return;
+            }
+
+            select.innerHTML = tables.map(name =>
+                `<option value="${name}" ${name === selected ? 'selected' : ''}>${name}</option>`
+            ).join('');
+
+            if (!autoJoin) {
+                summary.textContent = '';
+            } else if (joined && joined.length) {
+                summary.textContent = `Joined: ${joined.join(', ')}`;
+            } else {
+                summary.textContent = 'No table joins onto this one without duplicating rows.';
+            }
+
+            picker.classList.remove('hidden');
+        }
+
+        async function changeTable() {
+            selectedTable = document.getElementById('table-select').value;
+            document.getElementById('step-results').classList.add('hidden');
+            await analyzeFile();
+        }
+
+        // AI picks stay marked until the user overrides that specific field.
+        // Ring utilities only: a border colour here would tie with the card's
+        // own border class and resolve by stylesheet order rather than intent.
+        const AI_HIGHLIGHT = ['ring-2', 'ring-purple-400', 'ring-offset-1'];
+
+        function markAiSuggested(select) {
+            const card = select.closest('.mapping-card');
+            if (!card) return;
+            card.classList.add(...AI_HIGHLIGHT);
+            const badge = card.querySelector('.ai-badge');
+            if (badge) badge.classList.remove('hidden');
+        }
+
+        function clearAiSuggested(select) {
+            const card = select.closest('.mapping-card');
+            if (!card) return;
+            card.classList.remove(...AI_HIGHLIGHT);
+            const badge = card.querySelector('.ai-badge');
+            if (badge) badge.classList.add('hidden');
+        }
+
+        async function toggleAutoJoin() {
+            autoJoin = document.getElementById('auto-join').checked;
+            document.getElementById('step-results').classList.add('hidden');
+            await analyzeFile();
+        }
+
         async function analyzeFile() {
             if (!selectedFile) return;
 
-            const formData = new FormData();
-            formData.append('file', selectedFile);
+            const formData = buildFormData();
 
             analyzeBtn.innerHTML = '<span class="spinner"></span> Analyzing...';
             analyzeBtn.disabled = true;
@@ -190,7 +286,9 @@
                 canonicalColumns = result.canonical_columns;
                 fileColumns = result.file_columns;
                 aiEnhanced = false;
+                selectedTable = result.selected_table;
 
+                renderTablePicker(result.tables, result.selected_table, result.joined_tables);
                 renderMappingForm(result.suggested_mapping);
 
                 document.getElementById('step-mapping').classList.remove('hidden');
@@ -215,8 +313,7 @@
         async function enhanceMapping() {
             if (!selectedFile) return;
 
-            const formData = new FormData();
-            formData.append('file', selectedFile);
+            const formData = buildFormData();
 
             enhanceBtn.innerHTML = '<span class="spinner"></span> Enhancing with AI...';
             enhanceBtn.disabled = true;
@@ -233,12 +330,7 @@
                     const select = document.querySelector(`select[data-canonical="${canonical}"]`);
                     if (select && fileCol) {
                         select.value = fileCol;
-                        // Flash the updated field
-                        const parent = select.closest('.mapping-card');
-                        if (parent) {
-                            parent.classList.add('ring-2', 'ring-purple-400', 'ring-offset-1');
-                            setTimeout(() => parent.classList.remove('ring-2', 'ring-purple-400', 'ring-offset-1'), 1500);
-                        }
+                        markAiSuggested(select);
                     }
                 }
 
@@ -287,10 +379,11 @@
                 const label = canonical.replace(/_/g, ' ');
 
                 div.innerHTML = `
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center gap-2">
                         <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">${label}</label>
+                        <span class="ai-badge hidden shrink-0 text-[10px] font-bold uppercase tracking-wide text-purple-700 bg-purple-100 border border-purple-200 rounded-full px-2 py-0.5">AI</span>
                     </div>
-                    <select data-canonical="${canonical}" class="mapping-select w-full p-2.5 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm shadow-sm transition">
+                    <select data-canonical="${canonical}" onchange="clearAiSuggested(this)" class="mapping-select w-full p-2.5 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm shadow-sm transition">
                         ${optionsHtml}
                     </select>
                 `;
@@ -313,8 +406,7 @@
                 }
             });
 
-            const formData = new FormData();
-            formData.append('file', selectedFile);
+            const formData = buildFormData();
             formData.append('mappings_json', JSON.stringify(mappings));
 
             processBtn.innerHTML = '<span class="spinner"></span> Mapping Data...';
@@ -362,9 +454,13 @@
         function resetUI() {
             document.getElementById('step-mapping').classList.add('hidden');
             document.getElementById('step-results').classList.add('hidden');
+            document.getElementById('table-picker').classList.add('hidden');
 
             fileNameDisplay.classList.add('hidden');
             selectedFile = null;
+            selectedTable = null;
+            autoJoin = false;
+            document.getElementById('auto-join').checked = false;
             aiEnhanced = false;
             analyzeBtn.disabled = true;
             analyzeBtn.classList.add('opacity-50', 'cursor-not-allowed');

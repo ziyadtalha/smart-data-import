@@ -74,10 +74,25 @@ def test_auto_map_ignores_unrecognized_headers():
 
 
 def test_auto_map_never_reuses_a_source_column():
-    """'amount' and 'price' are both unit_price synonyms; only the first may win."""
-    mapping = main.auto_map_columns(["amount", "price"])
-    assert mapping == {"unit_price": "amount"}
+    """'price' and 'unit_price' both name unit_price; only the first may win."""
+    mapping = main.auto_map_columns(["price", "unit_price"])
+    assert mapping == {"unit_price": "price"}
     assert len(set(mapping.values())) == len(mapping)
+
+
+@pytest.mark.parametrize("header", ["amount", "Amount", "AMOUNT"])
+def test_amount_is_a_total_not_a_unit_price(header):
+    """In point-of-sale exports 'amount' is the basket total.
+
+    pos_transactions.csv pairs basket_size=23 with amount=112.71, so reading it
+    as a per-unit price understates the row by a factor of the basket size.
+    """
+    assert main.auto_map_columns([header]) == {"total_price": header}
+
+
+def test_unit_price_still_wins_its_own_synonyms():
+    mapping = main.auto_map_columns(["Price_Per_Item", "Total_Price"])
+    assert mapping == {"unit_price": "Price_Per_Item", "total_price": "Total_Price"}
 
 
 def test_auto_map_handles_empty_input():

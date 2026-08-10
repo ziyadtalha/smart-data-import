@@ -6,6 +6,9 @@ An interactive web application that maps columns from uploaded files (CSV, XLSX,
 
 ## Features
 
+- **Multi-Format Ingestion**: Reads CSV, XLSX, XLS and SQLite databases through the same mapping flow.
+- **SQLite Table Selection**: Lists every table and view in an uploaded database and maps one at a time. Left to itself it picks the table matching the most canonical fields, so a large lookup table never wins over the transaction table; a dropdown switches tables and remaps.
+- **Grain-Safe Auto-Join**: Optionally widens the chosen table with columns from related tables, joining only where the row count provably cannot change. See below.
 - **Hybrid Mapping Engine**: Rule-based synonym matching runs first and always; an optional "Enhance with AI" step sends the headers and sample rows to Ollama for a second opinion.
 - **AI Refinement**: When AI enhancement is triggered, the returned mapping overwrites the dropdown selections and the changed fields flash to show what moved. Every mapping stays editable afterwards.
 - **One-to-One Validation**: Both the rule-based and AI mappings are validated so that no canonical field claims a source column already taken by another.
@@ -101,19 +104,70 @@ The application will start on: **http://127.0.0.1:8080**
 
 ## Usage
 
-1. Upload a `.csv`, `.xlsx`, or `.xls` file.
+1. Upload a `.csv`, `.xlsx`, `.xls`, `.sqlite`, `.sqlite3` or `.db` file.
 2. Click **Analyze Columns** — the rule-based engine pre-fills the mapping dropdowns.
-3. *(Optional)* Click **Enhance with AI** to have the LLM revise the mapping using the headers and the first 10 rows of data.
-4. Adjust any dropdown manually, then process the file to see the mapped preview.
+3. *For databases*, a **Database table** dropdown appears when the file holds more than one table. Switching tables re-analyzes against that table.
+4. *(Optional)* Click **Enhance with AI** to have the LLM revise the mapping using the headers and the first 10 rows of data.
+5. Adjust any dropdown manually, then process the file to see the mapped preview.
 
 ---
 
 ## API Endpoints
 
 - `GET /` — Serves the frontend column mapper interface.
-- `POST /analyze/` — Inspects the uploaded file headers (first 10 rows) and returns the canonical column definitions, the file's columns, the rule-based mapping, and sample data.
+- `POST /analyze/` — Inspects the uploaded file headers (first 10 rows) and returns the canonical column definitions, the file's columns, the rule-based mapping, sample data, and — for databases — `tables` and `selected_table`.
 - `POST /enhance/` — Sends headers plus sample rows to Ollama and returns both the `ai_mapping` and the `auto_mapping` for comparison.
 - `POST /process/` — Reconstructs and returns the sanitized canonical data across the full file, based on the chosen column mappings.
+
+All three accept two optional form fields for database uploads: `table`, naming
+the table to read, and `auto_join`, widening it with related tables. Omit
+`table` and the app chooses; name a table that isn't there and the response is a
+400 listing the ones that are. Every response reports `selected_table` and
+`joined_tables`. For non-database uploads `tables` and `joined_tables` come back
+empty and `selected_table` is `null`.
+
+### Auto-join
+
+Pass `auto_join=true` (or tick **Pull in related tables**) and the chosen table
+is widened with columns from tables that join onto it. A table is only folded in
+when both of these hold:
+
+1. **The join key is unique in the target.** That makes the relationship
+   many-to-one, so each source row matches at most one target row and the row
+   count provably cannot change.
+2. **The key matches most sampled rows.** Uniqueness alone cannot distinguish a
+   real relationship from a column name two unrelated tables happen to share.
+
+Both conditions exist because a fan-out join is quietly destructive rather than
+loudly broken. On olist, joining `order_payments` onto `order_items` adds only
+4% more rows but reports **14,209,115.34** in revenue instead of the true
+**13,591,643.70** — a plausible number that is wrong. The second condition
+catches the opposite failure: `leads_closed` shares `seller_id` with
+`order_items` and is grain-safe, but matches 4.5% of it and belongs to a
+different business process entirely.
+
+Uploading `olist.sqlite` with auto-join expands `order_items` from 7 columns to
+30 by folding in `orders`, `products`, `sellers`, `customers` and
+`product_category_name_translation`, leaving the row count at 112,650 and the
+revenue total unchanged. `joined_tables` in the response names what was used.
+
+The temp copy of the database is indexed on each join key first — uploads carry
+no indexes, and `LIMIT` does not rescue an unindexed join. That one step takes
+analysis of the olist join from ~19s to ~3s.
+
+Its blind spot is relevance, not correctness: a table can be grain-safe and
+well-matched yet still make no business sense to join. `joined_tables` is
+reported so you can see what happened and switch the base table if it is wrong.
+
+### Supported formats
+
+| Extension | Read via | Notes |
+| --- | --- | --- |
+| `.csv` | `pandas.read_csv` | |
+| `.xlsx`, `.xls` | `pandas.read_excel` | First sheet only |
+| `.sqlite`, `.sqlite3`, `.db` | `sqlite3` + `pandas.read_sql_query` | One table or view per pass; spooled to a temp file since sqlite3 needs a real path |
+
+Anything else is rejected with a 400 naming the formats that are accepted.
 
 ---
 
