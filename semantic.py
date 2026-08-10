@@ -17,13 +17,18 @@ MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 # Cosine similarity below this is treated as no match.
 #
-# Calibrated against the headers in testdata/. The hardest wrong match that
-# survives the identifier guard is "order_status" -> order_date at 0.650: two
-# order-prefixed phrases that the model cannot pull apart. The threshold sits
-# above it with margin, which costs recall — "Timestamp" (0.609) and
-# "basket_size" (0.558) are correct matches this stage gives up on rather than
-# guess at. The opt-in LLM stage exists for those.
-SIMILARITY_THRESHOLD = 0.68
+# Calibrated by sweeping the threshold over 103 hand-labelled headers drawn from
+# every table in testdata/, and taking the widest band that admits no wrong
+# match at all. That band is [0.665, 0.679), bounded below by the hardest wrong
+# match — "return_date" -> order_date at 0.660, in a rental table where the
+# genuine order date is "rental_date" — and above by the weakest correct one,
+# "payment_value" -> total_price at 0.679. 0.67 sits in the middle of it.
+#
+# What it still costs: "Timestamp" (0.640), "rental_date" (0.643) and
+# "begin_date_time" (0.639) are correct matches this stage declines rather than
+# guess at, because "return_date" and "end_date_time" sit right on top of them.
+# The opt-in LLM stage exists for those.
+SIMILARITY_THRESHOLD = 0.67
 
 _model = None
 _model_lock = threading.Lock()
@@ -72,11 +77,11 @@ def humanize(header: str) -> str:
 def looks_like_identifier(header: str) -> bool:
     """True for foreign-key style headers, which must not be matched by meaning.
 
-    Every identifier embeds close to every other one: product_id scores 0.751
-    against product_name and seller_id scores 0.720 against customer_id, both
-    above genuine matches elsewhere. Identifier headers that really are
-    canonical (id, order_id, customer_id) are caught by the synonym rules
-    before this stage runs, so excluding them here costs nothing.
+    Every identifier embeds close to every other one: on olist, seller_id
+    scores 0.670 against customer_id and product_id 0.665, near enough to the
+    threshold to land a foreign key on the wrong field. Identifier headers that
+    really are canonical (id, order_id, customer_id) are caught by the synonym
+    rules before this stage runs, so excluding them here costs nothing.
     """
     return re.search(r"(^|\s)(id|ids|identifier|no|number|code)$", humanize(header)) is not None
 
@@ -88,7 +93,7 @@ def type_conflicts(canonical_type: str, kind: str | None) -> bool:
     """True when the sampled values cannot be what the canonical field declares.
 
     Header text alone cannot tell product_name from product_name_lenght — the
-    latter holds the length of the name and scores 0.712 against product_name,
+    latter holds the length of the name and scores 0.689 against product_name,
     because that is genuinely what its name resembles. The values settle it:
     product_name is declared a string and the column is full of integers.
 
@@ -107,11 +112,13 @@ def type_conflicts(canonical_type: str, kind: str | None) -> bool:
 def canonical_text(column: dict) -> str:
     """Name, description and synonyms together.
 
-    Measured against the headers in testdata/, at the threshold where each
-    variant admits no wrong match: name alone keeps 1 of 10 correct matches,
-    name+description 5, name+synonyms 5, and all three 6. Adding the synonyms
-    compresses the wrong matches harder than the right ones, which is what
-    buys the extra room.
+    Measured over the labelled headers in testdata/, at each variant's best
+    threshold that admits no wrong match: name alone and name plus synonyms
+    never reach one, because some wrong match outscores every right match at
+    every cut. Name plus description reaches 9 correct matches, and adding the
+    synonyms reaches the same 9 at a lower threshold — 0.665 rather than 0.695
+    — so the wrong matches sit further below the cut. The synonyms are kept for
+    that margin rather than for reach.
     """
     return (
         f"{column['name'].replace('_', ' ')}: {column['description']} "
@@ -162,7 +169,7 @@ def match(
     # whose best field is already spoken for slides onto its second choice:
     # olist has both product_category_name and product_category_name_english,
     # both plainly categories, and the runner-up would land on product_name at
-    # 0.780. A consolation prize is not evidence.
+    # 0.741. A consolation prize is not evidence.
     kinds = column_kinds or {}
     proposals = []
     for row, column in enumerate(candidates):

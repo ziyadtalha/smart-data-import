@@ -358,6 +358,12 @@ def test_table_scoring_does_not_embed_once_per_table(analyze, tmp_path, monkeypa
 @pytest.mark.parametrize("header,expected", [
     ("Item_Category", "category"),
     ("product_category_name_english", "category"),
+    ("order_purchase_timestamp", "order_date"),
+    ("payment_date", "order_date"),
+    ("basket_size", "quantity"),
+    ("payment_value", "total_price"),
+    ("total_sales", "total_price"),
+    ("first_name", "customer_name"),
 ])
 def test_real_model_matches_known_headers(header, expected):
     if not semantic.is_available():
@@ -369,13 +375,32 @@ def test_real_model_matches_known_headers(header, expected):
 @pytest.mark.embedding
 @pytest.mark.parametrize("header", [
     "order_status", "Payment_Method", "freight_value", "last_update",
-    "release_year", "special_features",
+    "release_year", "special_features", "return_date", "customer_city",
+    "shipping_limit_date", "product_weight_g", "declared_monthly_revenue",
+    "district",
 ])
 def test_real_model_refuses_known_traps(header):
-    """order_status vs order_date is the closest call at 0.650."""
+    """return_date vs order_date is the closest call at 0.660.
+
+    It is what sets the threshold: no wrong match on the labelled headers in
+    testdata/ scores higher, and every correct one scores at least 0.679.
+    """
     if not semantic.is_available():
         pytest.skip("fastembed not installed")
     assert semantic.match([header], main.CANONICAL_COLUMNS) == {}
+
+
+@pytest.mark.embedding
+def test_real_model_declines_a_date_it_cannot_separate_from_a_return():
+    """In sakila's rental table, rental_date is the sale and return_date is not.
+
+    They sit 0.017 apart and the wrong one is on top, so stage 2 takes neither
+    rather than guess. The opt-in LLM stage exists for exactly this.
+    """
+    if not semantic.is_available():
+        pytest.skip("fastembed not installed")
+    matched = semantic.match(["rental_date", "return_date"], main.CANONICAL_COLUMNS)
+    assert "order_date" not in matched
 
 
 @pytest.mark.embedding

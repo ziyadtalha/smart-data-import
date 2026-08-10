@@ -23,6 +23,17 @@ if os.path.exists(".env"):
 
 app = FastAPI()
 
+# The descriptions are not just documentation: stage 2 embeds them and compares
+# column headers against the result, so their wording decides what matches. Two
+# habits keep them working, both learned by measurement:
+#
+#   * Be discriminative, not merely accurate. "Date the order was placed"
+#     is true, and it attracted every *_date column in the schema.
+#   * Never write what a field is not. Embeddings have no negation — "not the
+#     delivery date" puts "delivery date" into the vector and pulls it closer.
+#
+# Concrete example values do most of the work. Reword these only alongside a
+# run of tools/tune_semantic.py, which measures what the change costs or buys.
 CANONICAL_COLUMNS = [
     {
         "name": "order_id",
@@ -32,7 +43,7 @@ CANONICAL_COLUMNS = [
     },
     {
         "name": "order_date",
-        "description": "Date the order was placed or processed.",
+        "description": "The moment the purchase was made and the basket was paid for, for example 2023-04-17.",
         "synonyms": ["order_date", "orderdate", "date", "sale_date"],
         "type": "date",
     },
@@ -51,43 +62,43 @@ CANONICAL_COLUMNS = [
     },
     {
         "name": "customer_name",
-        "description": "Name of the customer or buyer.",
+        "description": "The person's name, first name and surname, such as Jane Alvarez.",
         "synonyms": ["customer", "customer_name", "client", "customerName"],
         "type": "string",
     },
     {
         "name": "customer_email",
-        "description": "Customer email address.",
+        "description": "Where to email this person, such as jane.alvarez@example.com.",
         "synonyms": ["email", "email_address", "mail"],
         "type": "string",
     },
     {
         "name": "customer_phone",
-        "description": "Customer phone number.",
+        "description": "The digits dialled to ring this person, for example +1 555 0134.",
         "synonyms": ["phone", "mobile", "tel", "phone_number"],
         "type": "string",
     },
     {
         "name": "category",
-        "description": "Product category or department classification.",
+        "description": "The product's group in the catalogue, such as beverages, toys or electronics.",
         "synonyms": ["category", "product_category", "department"],
         "type": "string",
     },
     {
         "name": "product_name",
-        "description": "Name of the sold product or item.",
+        "description": "What the item is called on the receipt, such as blue cotton t-shirt.",
         "synonyms": ["product", "product_name", "item", "item_name"],
         "type": "string",
     },
     {
         "name": "quantity",
-        "description": "Quantity of units purchased.",
+        "description": "How many items went into the basket, for example 1, 2 or 3.",
         "synonyms": ["qty", "quantity", "units"],
         "type": "integer",
     },
     {
         "name": "unit_price",
-        "description": "Price per unit before total calculation.",
+        "description": "The price of one item on its own, for example 4.90 each.",
         "synonyms": ["price", "unit_price", "price_per_item", "item_price"],
         "type": "decimal",
     },

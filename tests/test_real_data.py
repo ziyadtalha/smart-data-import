@@ -76,6 +76,16 @@ def test_transactions_amount_maps_to_total_not_unit_price(analyze, transactions_
     assert "unit_price" not in mapping
 
 
+@pytest.mark.embedding
+def test_transactions_basket_size_maps_to_quantity(analyze, transactions_bytes):
+    """No synonym reaches it, so only stage 2 can."""
+    if not semantic.is_available():
+        pytest.skip("fastembed not installed")
+    body = analyze(transactions_bytes, name=POS_TRANSACTIONS.name).json()
+    assert body["suggested_mapping"]["quantity"] == "basket_size"
+    assert body["mapping_sources"]["quantity"] == "semantic"
+
+
 def test_transactions_id_maps_to_order_id(analyze, transactions_bytes):
     mapping = analyze(transactions_bytes, name=POS_TRANSACTIONS.name).json()[
         "suggested_mapping"

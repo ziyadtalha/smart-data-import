@@ -25,6 +25,8 @@ An interactive web application that maps columns from uploaded files (CSV, XLSX,
 ├── static/
 │   └── index.html        # Single-page frontend (TailwindCSS via CDN)
 ├── tests/                # pytest suite (see Testing below)
+├── tools/
+│   └── tune_semantic.py  # Calibration harness for stage 2's threshold
 ├── testdata/             # Local datasets, git-ignored — see testdata/README.md
 ├── requirements.txt      # Runtime dependencies
 ├── requirements-dev.txt  # Runtime + test dependencies
@@ -148,30 +150,57 @@ skipped and stage 1 still works.
 Four constraints keep it from guessing:
 
 **Identifier headers are excluded.** Every identifier embeds close to every
-other one — `product_id` scores 0.751 against `product_name`, and `seller_id`
-scores 0.720 against `customer_id`, both higher than genuine matches elsewhere.
-Headers ending in `id`, `code`, `number` and the like are left to stage 1,
-which handles the ones that really are canonical.
+other one — on olist, `seller_id` scores 0.670 against `customer_id` and
+`product_id` 0.665, near enough to the threshold to land a foreign key on the
+wrong field. Headers ending in `id`, `code`, `number` and the like are left to
+stage 1, which handles the ones that really are canonical.
 
-**The threshold sits above the worst wrong match, with margin.** Calibrated
-against the headers in `testdata/`, the closest wrong call that survives the
-identifier guard is `order_status` → `order_date` at 0.650 — two
-order-prefixed phrases the model cannot pull apart. The threshold of 0.68 costs
-real recall: `Timestamp` (0.609) and `basket_size` (0.558) are correct matches
-this stage declines rather than guesses at, and stage 3 picks them up.
+**The threshold sits above the worst wrong match, with margin.** Calibrated by
+sweeping it over 103 hand-labelled headers drawn from every table in
+`testdata/` and taking the widest band that admits no wrong match at all. That
+band is `[0.665, 0.679)`, bounded below by the hardest wrong call —
+`return_date` → `order_date` at 0.660, in a rental table whose real order date
+is `rental_date` — and above by the weakest correct one, `payment_value` →
+`total_price` at 0.679. The threshold of 0.67 sits in the middle. It still
+costs recall: `rental_date` (0.643), `Timestamp` (0.640) and `begin_date_time`
+(0.639) are correct matches this stage declines rather than guesses at, because
+`return_date` and `end_date_time` sit right on top of them. Stage 3 picks those
+up.
 
 **A header proposes only its single best field — no consolation prizes.** A
 joined olist row carries both `product_category_name` and
 `product_category_name_english`. Both are plainly categories, and assigning the
-runner-up to whatever is still free put it on `product_name` at 0.780. If a
+runner-up to whatever is still free put it on `product_name` at 0.741. If a
 header's best field is already taken, the header is dropped instead.
 
 **A match whose values contradict the declared type is rejected.** Header text
 alone cannot separate `product_name` from `product_name_lenght`, which holds
-the length of the name and scores 0.712 — that genuinely is what its name
+the length of the name and scores 0.689 — that genuinely is what its name
 resembles. The sampled values settle it: `product_name` is declared a `string`
 and the column holds integers. Only clear contradictions count, and dates are
 exempt because they arrive as strings as often as not.
+
+#### The canonical descriptions are part of the matcher
+
+Stage 2 embeds each field's name, description and synonyms together and
+compares headers against the result, so the descriptions are not documentation
+— their wording decides what matches. Two habits keep them working:
+
+- **Be discriminative, not merely accurate.** `order_date` once read "Date the
+  order was placed or processed". Perfectly true, and it attracted every
+  `*_date` column in the schema. It now names the moment of purchase and gives
+  an example value.
+- **Never write what a field is not.** Embeddings have no negation: "not the
+  delivery date" puts *delivery date* into the vector and pulls those columns
+  closer.
+
+Rewriting the eleven descriptions on those two rules, with no code change, took
+stage 2 from 5 correct matches to 9 on the labelled set — and lowered the
+threshold at the same time, because the wrong matches fell further than the
+right ones. `basket_size` → `quantity` went from 0.558 to 0.697 when
+`quantity`'s description stopped reading "Quantity of units purchased" (which
+attracted every numeric measurement) and started reading "How many items went
+into the basket". Reword them only alongside a re-run of that calibration.
 
 **Several columns may want the same field, and only one gets it.** Wide tables
 make near-duplicate columns common, so proposals are resolved by score and the
@@ -189,31 +218,37 @@ olist.sqlite (11 tables)
   2. join related tables     -> +5 tables          uniqueness + match rate, no model
   3. 30 column names         -> from here, identical to a CSV
   4. rules claim what they can -> order_id, price, customer_id
-  5. the 27 leftovers go to the model
+  5. the 23 leftovers go to the model
 ```
 
-Of those 27, four are dropped as identifiers (`order_item_id`, `product_id`,
-`seller_id`, `customer_unique_id`). The remaining 23 each name their best
-canonical field, and the filters do the rest:
+Six of the 30 are dropped as identifiers (`order_id`, `order_item_id`,
+`product_id`, `seller_id`, `customer_id`, `customer_unique_id`) and one more
+was claimed by a rule. The remaining 23 each name their best canonical field,
+and the filters do the rest:
 
 | Column | Best guess | Score | Outcome |
 | --- | --- | --- | --- |
-| `product_category_name` | `category` | 0.829 | **kept** |
-| `product_category_name_english` | `category` | 0.791 | lost the field to the line above |
-| `product_name_lenght` | `product_name` | 0.712 | rejected — integers cannot fill a `string` |
-| `order_purchase_timestamp` | `order_date` | 0.709 | **kept** |
-| `order_delivered_customer_date` | `order_date` | 0.691 | lost the field |
-| `order_delivered_carrier_date` | `order_date` | 0.686 | lost the field |
-| `order_status` | `order_date` | 0.650 | below threshold |
-| `product_weight_g` | `quantity` | 0.597 | below threshold |
+| `product_category_name` | `category` | 0.821 | **kept** |
+| `product_category_name_english` | `category` | 0.789 | lost the field to the line above |
+| `order_purchase_timestamp` | `order_date` | 0.754 | **kept** |
+| `order_delivered_customer_date` | `order_date` | 0.708 | lost the field |
+| `product_name_lenght` | `product_name` | 0.689 | rejected — integers cannot fill a `string` |
+| `order_delivered_carrier_date` | `order_date` | 0.687 | lost the field |
+| `customer_state` | `customer_id` | 0.670 | lost the field — a rule already had it |
+| `customer_zip_code_prefix` | `customer_phone` | 0.652 | below threshold |
+| `order_status` | `order_date` | 0.647 | below threshold |
+| `customer_city` | `customer_phone` | 0.636 | below threshold |
+| `shipping_limit_date` | `order_date` | 0.634 | below threshold |
+| `product_weight_g` | `quantity` | 0.587 | below threshold |
 
-Five proposals cleared the filters, contesting two fields, so two survive:
+Four proposals cleared the threshold, contesting two fields, so two survive:
 30 columns become 3 rule matches and 2 semantic ones.
 
-Note how thin the winning margin is on the date group — 0.018 over the
-runner-up. It picked correctly, since purchase time really is the order date,
-but that is not a margin to trust blindly. It is the reason semantic matches
-are badged for review rather than applied silently.
+The date group is the one to watch. `order_purchase_timestamp` beat
+`order_delivered_customer_date` by 0.046, and it picked correctly — purchase
+time really is the order date — but four `*_date` columns were bunched inside
+0.07 of each other. That is not a margin to trust blindly, and it is why
+semantic matches are badged for review rather than applied silently.
 
 Stage 2 applies to every upload, database included. It runs once, on the
 columns finally selected — table scoring and join planning stay on the rules,
@@ -292,6 +327,23 @@ Tests marked `realdata` exercise the datasets in [testdata/](testdata/). Those
 files are git-ignored, and the tests skip cleanly when they are absent — see
 [testdata/README.md](testdata/README.md) for download links.
 
+### Recalibrating stage 2
+
+The tests pin the behaviour that matters, but the threshold and the canonical
+descriptions were chosen by measurement, and that measurement is reproducible:
+
+```bash
+python tools/tune_semantic.py            # sweep the threshold
+python tools/tune_semantic.py --detail 0.67
+```
+
+It runs rules-then-embeddings over 103 hand-labelled headers from every table
+in `testdata/` and prints, for each cut, how many correct matches survive and
+what the worst wrong match is. The number to maximise is the correct-match
+count at the highest cut that still admits zero wrong ones. Run it after
+touching a description, a synonym list or the threshold; it needs the datasets
+and `fastembed`, and reports on whatever subset of `testdata/` is present.
+
 ---
 
 ## Known limitations
@@ -320,13 +372,15 @@ cannot produce that state.
 **Excel reads the first sheet only.** A multi-sheet workbook is the same
 problem as a multi-table database, and could reuse the table picker.
 
-**Canonical descriptions were written for humans, not embeddings.** Stage 2
-compares headers against them directly, which makes them the highest-leverage
-knob in the system — `order_date` reading "Date the order was placed or
-processed" attracts every date column in a schema, and `quantity` attracts
-every numeric measurement (`product_weight_g` scores 0.597 against it).
-Rewriting them to be discriminative rather than merely accurate would raise
-recall at no runtime cost.
+**Stage 2 cannot separate a sale from its neighbouring event.** `return_date`
+outscores `rental_date`, and `end_date_time` outscores `begin_date_time`, so
+the matcher declines both rather than take the wrong one. Descriptions cannot
+fix this — the field *name* `order date` is equidistant from both — and it is
+the single thing capping the threshold. Stage 3 resolves these.
+
+**The threshold is calibrated against 103 headers from five datasets.** That is
+enough to be honest about the trade-off, not enough to be a benchmark. A schema
+unlike anything in `testdata/` may sit differently against it.
 
 **Auto-join guarantees correctness, not relevance.** A table can be grain-safe
 and well-matched yet make no business sense to join. `joined_tables` is
