@@ -1,6 +1,12 @@
 .env
 .venv/
 __pycache__/
+.pytest_cache/
 
 *.csv
 *.xlsx
+
+# Local datasets are large and carry upstream licences — keep the
+# provenance notes, exclude the data itself.
+/testdata/*
+!/testdata/README.md

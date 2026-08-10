@@ -32,6 +32,19 @@ CANONICAL_COLUMNS = [
         "type": "date",
     },
     {
+        "name": "customer_id",
+        "description": "Unique identifier for the customer or buyer account.",
+        "synonyms": [
+            "customer_id",
+            "customerid",
+            "client_id",
+            "buyer_id",
+            "customer_unique_id",
+            "customer_number",
+        ],
+        "type": "string",
+    },
+    {
         "name": "customer_name",
         "description": "Name of the customer or buyer.",
         "synonyms": ["customer", "customer_name", "client", "customerName"],
@@ -88,7 +101,7 @@ def normalize_string(val: str) -> str:
 
 CANONICAL_COLUMN_LOOKUP = {}
 for column in CANONICAL_COLUMNS:
-    CANONICAL_COLUMN_LOOKUP[column["name"]] = column
+    CANONICAL_COLUMN_LOOKUP[column["name"]] = column["name"]
     for alias in column["synonyms"]:
         CANONICAL_COLUMN_LOOKUP[normalize_string(alias)] = column["name"]
 
