@@ -4,3 +4,6 @@ pandas>=2.0.0
 openpyxl>=3.1.0
 python-multipart>=0.0.9
 ollama>=0.1.0
+# Stage 2 semantic matching. Runs BAAI/bge-small-en-v1.5 locally through ONNX.
+# Optional: the app falls back to rule-based mapping when it is absent.
+fastembed>=0.4.0

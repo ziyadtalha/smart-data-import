@@ -251,16 +251,18 @@
             const card = select.closest('.mapping-card');
             if (!card) return;
             card.classList.add(...AI_HIGHLIGHT);
-            const badge = card.querySelector('.ai-badge');
-            if (badge) badge.classList.remove('hidden');
+            card.querySelector('.ai-badge')?.classList.remove('hidden');
+            // The AI verdict supersedes stage 2's weaker guess.
+            card.querySelector('.match-badge')?.classList.add('hidden');
         }
 
-        function clearAiSuggested(select) {
+        // Once the user picks a field themselves, neither suggestion applies.
+        function clearSuggestionBadges(select) {
             const card = select.closest('.mapping-card');
             if (!card) return;
             card.classList.remove(...AI_HIGHLIGHT);
-            const badge = card.querySelector('.ai-badge');
-            if (badge) badge.classList.add('hidden');
+            card.querySelector('.ai-badge')?.classList.add('hidden');
+            card.querySelector('.match-badge')?.classList.add('hidden');
         }
 
         async function toggleAutoJoin() {
@@ -289,7 +291,7 @@
                 selectedTable = result.selected_table;
 
                 renderTablePicker(result.tables, result.selected_table, result.joined_tables);
-                renderMappingForm(result.suggested_mapping);
+                renderMappingForm(result.suggested_mapping, result.mapping_sources);
 
                 document.getElementById('step-mapping').classList.remove('hidden');
 
@@ -359,9 +361,10 @@
             }
         }
 
-        function renderMappingForm(suggestedMapping) {
+        function renderMappingForm(suggestedMapping, mappingSources) {
             const container = document.getElementById('mapping-controls');
             container.innerHTML = '';
+            const sources = mappingSources || {};
 
             canonicalColumns.forEach(field => {
                 const canonical = field.name;
@@ -381,12 +384,20 @@
                 div.innerHTML = `
                     <div class="flex justify-between items-center gap-2">
                         <label class="text-xs font-bold text-slate-700 uppercase tracking-wider">${label}</label>
+                        <span class="match-badge hidden shrink-0 text-[10px] font-bold uppercase tracking-wide text-sky-700 bg-sky-100 border border-sky-200 rounded-full px-2 py-0.5"
+                            title="Matched by meaning rather than by name. Worth a look.">similar</span>
                         <span class="ai-badge hidden shrink-0 text-[10px] font-bold uppercase tracking-wide text-purple-700 bg-purple-100 border border-purple-200 rounded-full px-2 py-0.5">AI</span>
                     </div>
-                    <select data-canonical="${canonical}" onchange="clearAiSuggested(this)" class="mapping-select w-full p-2.5 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm shadow-sm transition">
+                    <select data-canonical="${canonical}" onchange="clearSuggestionBadges(this)" class="mapping-select w-full p-2.5 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm shadow-sm transition">
                         ${optionsHtml}
                     </select>
                 `;
+                // A semantic match is a suggestion, so it is flagged; an exact
+                // or synonym match is certain and needs no decoration.
+                if (sources[canonical] === 'semantic') {
+                    div.querySelector('.match-badge').classList.remove('hidden');
+                }
+
                 container.appendChild(div);
             });
         }

@@ -6,6 +6,8 @@ import tempfile
 from dataclasses import dataclass, field
 import ollama
 import pandas as pd
+
+import semantic
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
@@ -126,6 +128,59 @@ def auto_map_columns(file_columns: list[str]) -> dict[str, str]:
             mapping[canonical_name] = col
             used_columns.add(col)
     return mapping
+
+
+def column_kinds(df: pd.DataFrame) -> dict[str, str]:
+    """Classify each sampled column so stage 2 can reject impossible matches."""
+    kinds: dict[str, str] = {}
+    for name in df.columns:
+        values = df[name].dropna()
+        if values.empty:
+            kinds[name] = "unknown"
+        elif pd.api.types.is_numeric_dtype(values):
+            kinds[name] = "number"
+        elif pd.api.types.is_datetime64_any_dtype(values):
+            kinds[name] = "datetime"
+        else:
+            kinds[name] = "text"
+    return kinds
+
+
+def suggest_mapping(
+    file_columns: list[str],
+    use_semantic: bool = True,
+    sample: pd.DataFrame | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Run stage 2: exact and synonym rules, then embedding similarity.
+
+    Returns the mapping plus, per canonical field, whether it came from the
+    rules or from the semantic matcher — the caller surfaces that difference
+    because a semantic match is a suggestion rather than a certainty.
+    """
+    mapping = auto_map_columns(file_columns)
+    sources = {field: "rule" for field in mapping}
+
+    if not use_semantic or not semantic.is_available():
+        return mapping, sources
+
+    try:
+        matched = semantic.match(
+            file_columns,
+            CANONICAL_COLUMNS,
+            taken_fields=set(mapping),
+            taken_columns=set(mapping.values()),
+            column_kinds=column_kinds(sample) if sample is not None else None,
+        )
+    except Exception as e:
+        # A missing model download or offline host must not break the upload.
+        print(f"Semantic matching skipped: {e}")
+        return mapping, sources
+
+    for field, (column, _score) in matched.items():
+        mapping[field] = column
+        sources[field] = "semantic"
+
+    return mapping, sources
 
 
 def validate_one_to_one_mapping(
@@ -572,7 +627,7 @@ async def analyze_file(
     df = loaded.frame
 
     file_columns = list(df.columns)
-    auto_suggested = auto_map_columns(file_columns)
+    auto_suggested, mapping_sources = suggest_mapping(file_columns, sample=df)
 
     # Include sample data for preview (convert NaN to None for JSON)
     sample_df = df.astype(object).where(pd.notnull(df), None)
@@ -581,6 +636,7 @@ async def analyze_file(
         "canonical_columns": CANONICAL_COLUMNS,
         "file_columns": file_columns,
         "suggested_mapping": auto_suggested,
+        "mapping_sources": mapping_sources,
         "sample_data": sample_df.to_dict(orient="records"),
         "tables": loaded.tables,
         "selected_table": loaded.selected_table,
@@ -601,7 +657,7 @@ async def enhance_mapping(
 
     file_columns = list(df.columns)
     sample_data = df.to_dict(orient='records')
-    auto_mapping = auto_map_columns(file_columns)
+    auto_mapping, mapping_sources = suggest_mapping(file_columns, sample=df)
     ai_mapping = prompt_for_mapping(
         file_columns,
         sample_data=sample_data,
@@ -610,6 +666,7 @@ async def enhance_mapping(
     return {
         "ai_mapping": ai_mapping,
         "auto_mapping": auto_mapping,
+        "mapping_sources": mapping_sources,
         "selected_table": loaded.selected_table,
         "joined_tables": loaded.joined_tables,
     }

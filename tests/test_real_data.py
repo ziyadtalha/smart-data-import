@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 import main
+import semantic
 from conftest import TESTDATA
 
 POS_CSV = TESTDATA / "simulated_pos_data_with_seasonal_trends.csv"
@@ -288,6 +289,39 @@ def test_olist_auto_join_refuses_the_unrelated_leads_tables(client, olist_db_byt
     joined = response.json()["joined_tables"]
     assert "leads_closed" not in joined
     assert "leads_qualified" not in joined
+
+
+@pytest.mark.embedding
+def test_olist_semantic_stage_fills_date_and_category(client, olist_db_bytes):
+    """Neither header is a synonym, so stage 1 cannot reach them."""
+    if not semantic.is_available():
+        pytest.skip("fastembed not installed")
+    response = client.post(
+        "/analyze/",
+        files={"file": (OLIST_DB.name, olist_db_bytes, "application/octet-stream")},
+        data={"auto_join": "true"},
+    )
+    body = response.json()
+    mapping, sources = body["suggested_mapping"], body["mapping_sources"]
+    assert mapping["order_date"] == "order_purchase_timestamp"
+    assert sources["order_date"] == "semantic"
+    assert mapping["category"] == "product_category_name"
+    assert sources["category"] == "semantic"
+
+
+@pytest.mark.embedding
+def test_olist_semantic_stage_refuses_the_name_length_column(client, olist_db_bytes):
+    """product_name_lenght holds an integer; product_name is declared a string."""
+    if not semantic.is_available():
+        pytest.skip("fastembed not installed")
+    response = client.post(
+        "/analyze/",
+        files={"file": (OLIST_DB.name, olist_db_bytes, "application/octet-stream")},
+        data={"auto_join": "true"},
+    )
+    body = response.json()
+    assert "product_name_lenght" in body["file_columns"]
+    assert body["suggested_mapping"].get("product_name") != "product_name_lenght"
 
 
 def test_olist_auto_join_keeps_revenue_intact(client, olist_db_bytes):
