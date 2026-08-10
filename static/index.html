@@ -271,7 +271,8 @@
             const container = document.getElementById('mapping-controls');
             container.innerHTML = '';
 
-            canonicalColumns.forEach(canonical => {
+            canonicalColumns.forEach(field => {
+                const canonical = field.name;
                 const mappedValue = suggestedMapping[canonical] || '';
 
                 const div = document.createElement('div');
