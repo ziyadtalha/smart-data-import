@@ -85,6 +85,14 @@ CANONICAL_COLUMNS = [
         "type": "string",
     },
     {
+        "name": "product_id",
+        # Names the catalogue entry rather than the sale, so it does not compete with order_id. "SKU" earns its place: it is what the header is called in most retail exports and nothing else in the schema resembles it.
+        "description": "Unique identifier for the product or SKU in the catalogue.",
+        # Not "product" or "item" -- product_name owns both, and a synonym claimed twice resolves to whichever field is defined last.
+        "synonyms": ["product_id", "productid", "sku", "item_id", "item_code", "product_code"],
+        "type": "string",
+    },
+    {
         "name": "product_name",
         "description": "What the item is called on the receipt, such as blue cotton t-shirt.",
         "synonyms": ["product", "product_name", "item", "item_name"],
@@ -105,8 +113,7 @@ CANONICAL_COLUMNS = [
     {
         "name": "total_price",
         "description": "Total monetary amount charged for the transaction.",
-        # "amount" lives here rather than on unit_price: in point-of-sale
-        # exports it is the basket total, not the per-unit figure.
+        # "amount" lives here rather than on unit_price: in point-of-sale exports it is the basket total, not the per-unit figure.
         "synonyms": ["total", "amount", "total_amount", "amount_paid", "net_sales", "sale_total", "transaction_total"],
         "type": "decimal",
     },

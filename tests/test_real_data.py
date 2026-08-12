@@ -245,7 +245,11 @@ def test_olist_auto_selects_order_items(analyze, olist_db_bytes):
     """geolocation has ten times the rows but maps to nothing."""
     body = analyze(olist_db_bytes, name=OLIST_DB.name).json()
     assert body["selected_table"] == "order_items"
-    assert body["suggested_mapping"] == {"order_id": "order_id", "unit_price": "price"}
+    assert body["suggested_mapping"] == {
+        "order_id": "order_id",
+        "product_id": "product_id",
+        "unit_price": "price",
+    }
 
 
 def test_olist_orders_table_maps_ids(analyze, client, olist_db_bytes):

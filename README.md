@@ -194,7 +194,7 @@ compares headers against the result, so the descriptions are not documentation
   delivery date" puts *delivery date* into the vector and pulls those columns
   closer.
 
-Rewriting the eleven descriptions on those two rules, with no code change, took
+Rewriting the descriptions on those two rules, with no code change, took
 stage 2 from 5 correct matches to 9 on the labelled set — and lowered the
 threshold at the same time, because the wrong matches fell further than the
 right ones. `basket_size` → `quantity` went from 0.558 to 0.697 when
@@ -217,7 +217,7 @@ olist.sqlite (11 tables)
   1. choose a table          -> order_items        rules only, no model
   2. join related tables     -> +5 tables          uniqueness + match rate, no model
   3. 30 column names         -> from here, identical to a CSV
-  4. rules claim what they can -> order_id, price, customer_id
+  4. rules claim what they can -> order_id, product_id, price, customer_id
   5. the 23 leftovers go to the model
 ```
 
@@ -234,6 +234,7 @@ and the filters do the rest:
 | `order_delivered_customer_date` | `order_date` | 0.708 | lost the field |
 | `product_name_lenght` | `product_name` | 0.689 | rejected — integers cannot fill a `string` |
 | `order_delivered_carrier_date` | `order_date` | 0.687 | lost the field |
+| `order_estimated_delivery_date` | `order_date` | 0.687 | lost the field |
 | `customer_state` | `customer_id` | 0.670 | lost the field — a rule already had it |
 | `customer_zip_code_prefix` | `customer_phone` | 0.652 | below threshold |
 | `order_status` | `order_date` | 0.647 | below threshold |
@@ -241,8 +242,8 @@ and the filters do the rest:
 | `shipping_limit_date` | `order_date` | 0.634 | below threshold |
 | `product_weight_g` | `quantity` | 0.587 | below threshold |
 
-Four proposals cleared the threshold, contesting two fields, so two survive:
-30 columns become 3 rule matches and 2 semantic ones.
+Six proposals cleared the threshold, contesting two fields, so two survive:
+30 columns become 4 rule matches and 2 semantic ones.
 
 The date group is the one to watch. `order_purchase_timestamp` beat
 `order_delivered_customer_date` by 0.046, and it picked correctly — purchase
@@ -341,8 +342,16 @@ It runs rules-then-embeddings over 103 hand-labelled headers from every table
 in `testdata/` and prints, for each cut, how many correct matches survive and
 what the worst wrong match is. The number to maximise is the correct-match
 count at the highest cut that still admits zero wrong ones. Run it after
-touching a description, a synonym list or the threshold; it needs the datasets
-and `fastembed`, and reports on whatever subset of `testdata/` is present.
+touching a description, a synonym list, the threshold, **or the set of
+canonical fields**; it needs the datasets and `fastembed`, and reports on
+whatever subset of `testdata/` is present.
+
+Adding or removing a field is easy to overlook as a calibration change, but
+every header is scored against the whole set, so a new field changes what
+unrelated headers are compared to. When `product_id` was added the sweep came
+back byte-identical — same clean band `[0.665, 0.680)`, same 9 correct matches,
+same worst wrong match — because no header's best field became `product_id`.
+That is the outcome to check for, not to assume.
 
 ---
 
